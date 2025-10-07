@@ -1,0 +1,122 @@
+CREATE OR REPLACE PROCEDURE import_taxpayer_xml (
+    p_xml IN CLOB,
+    p_success OUT VARCHAR2
+) IS
+    v_xml XMLTYPE := XMLTYPE(p_xml);
+    v_taxpayer_id NUMBER;
+    v_document_id NUMBER;
+    v_hasrep CHAR(1);  
+    v_name     VARCHAR2(100);
+    v_egn      NUMBER;
+    v_type     NUMBER;
+    v_bulstat  NUMBER;
+    v_caddress VARCHAR2(200);
+BEGIN
+    -- Извличане на taxpayer данни в променливи
+    SELECT name, egn, type, bulstat, caddress
+    INTO v_name, v_egn, v_type, v_bulstat, v_caddress
+    FROM XMLTABLE(
+        '/doc/taxpayer'
+        PASSING v_xml
+        COLUMNS
+            name     VARCHAR2(100)  PATH 'name',
+            egn      NUMBER         PATH 'egn',
+            type     NUMBER         PATH 'type',
+            bulstat  NUMBER         PATH 'bulstat',
+            caddress VARCHAR2(200)  PATH 'caddress'
+    );
+
+    -- Вмъкване на taxpayer и връщане на ID
+    INSERT INTO taxpayer (name, egn, type, bulstat, caddress)
+    VALUES (v_name, v_egn, v_type, v_bulstat, v_caddress)
+    RETURNING id INTO v_taxpayer_id;
+
+    -- Проверка за representative
+    SELECT CASE WHEN val = 'true' THEN 'Y' ELSE 'N' END
+    INTO v_hasrep
+    FROM XMLTABLE(
+        '/doc/hasrepresentative'
+        PASSING v_xml
+        COLUMNS val VARCHAR2(10) PATH '.'
+    );
+
+    -- Вмъкване на taxpayer_info
+    INSERT INTO taxpayer_info (taxpayer_id, has_representative, reason, email)
+    SELECT
+        v_taxpayer_id,
+        v_hasrep,
+        reason,
+        email
+    FROM XMLTABLE(
+        '/doc'
+        PASSING v_xml
+        COLUMNS
+            reason VARCHAR2(4000) PATH 'reason',
+            email  VARCHAR2(200)  PATH 'email'
+    );
+
+    -- Вмъкване на representative, ако има
+    IF v_hasrep = 'Y' THEN
+        INSERT INTO representative (taxpayer_id, name, egn, type)
+        SELECT
+            v_taxpayer_id,
+            name,
+            egn,
+            type
+        FROM XMLTABLE(
+            '/doc/representative'
+            PASSING v_xml
+            COLUMNS
+                name VARCHAR2(100) PATH 'name',
+                egn  NUMBER        PATH 'egn',
+                type NUMBER        PATH 'type'
+        );
+    END IF;
+
+    -- Вмъкване на документи и полета
+    FOR doc_rec IN (
+        SELECT *
+        FROM XMLTABLE(
+            '/doc/docs/docenum'
+            PASSING v_xml
+            COLUMNS
+                document_id VARCHAR2(100) PATH 'id',
+                fields      XMLTYPE       PATH 'fields'
+        )
+    ) LOOP
+        -- Вмъкване в document
+        INSERT INTO document (
+            taxpayer_id, doc_id
+        ) VALUES (
+            v_taxpayer_id, doc_rec.document_id
+        )
+        RETURNING id INTO v_document_id;
+
+        -- Вмъкване на document_field
+        FOR field_rec IN (
+            SELECT *
+            FROM XMLTABLE(
+                '/fields/field'
+                PASSING doc_rec.fields
+                COLUMNS
+                    field_name  VARCHAR2(100)  PATH 'name',
+                    field_value VARCHAR2(4000) PATH 'value'
+            )
+        ) LOOP
+            INSERT INTO document_field (
+                document_id, name, value
+            ) VALUES (
+                v_document_id, field_rec.field_name, field_rec.field_value
+            );
+        END LOOP;
+    END LOOP;
+
+    COMMIT;
+    p_success := 'Import completed successfully';
+
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        p_success := 'Error: ' || SQLERRM;
+END;
+
