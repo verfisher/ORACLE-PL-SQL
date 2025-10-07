@@ -1,0 +1,45 @@
+
+--Всички  
+SELECT
+    t.id AS taxpayer_id,
+    t.name AS taxpayer_name,
+    t.egn AS taxpayer_egn,
+    t.type AS taxpayer_type,
+    t.bulstat,
+    t.caddress,
+    ti.has_representative,
+    ti.reason,
+    ti.email,
+    r.name AS representative_name,
+    r.egn AS representative_egn,
+    r.type AS representative_type,
+    df.DOCUMENT_ID,
+    df.NAME,
+    df.VALUE
+FROM
+    taxpayer t
+LEFT JOIN taxpayer_info ti ON ti.TAXPAYER_ID = t.ID
+LEFT JOIN representative r ON r.taxpayer_id = t.ID
+LEFT JOIN document d ON d.TAXPAYER_ID = t.ID
+LEFT JOIN document_field df ON df.DOCUMENT_ID = d.ID
+ORDER BY t.id, d.ID, df.id;
+
+---Всички документите, колко полета съдържат
+SELECT
+    d.id,
+    COUNT(df.id) AS field_count
+FROM
+    document d
+LEFT JOIN document_field df ON df.document_id = d.id
+GROUP BY d.id;
+-- Данъкоплатци без докумети 
+SELECT
+    t.id AS taxpayer_id,
+    t.name AS taxpayer_name,
+    r.name AS representative_name,
+    r.egn AS representative_egn
+FROM
+    taxpayer t
+JOIN representative r ON r.taxpayer_id = t.id;
+
+
